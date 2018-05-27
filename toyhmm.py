@@ -2,8 +2,9 @@ import os,sys,pdb,cPickle
 import numpy as np
 
 class TOYHMM(object):
-    def __init__(self, numS, numO, trainFlag=True):
+    def __init__(self, numS, numO, trainFlag=True, verbose = False):
         self.trainFlag = trainFlag
+        self.verbose = verbose
         if numS < 0 or numO < 0: #call load() after init()
             self.numS, self.numO = 0, 0
             self.prPi, self.prT, self.prO = None,None,None
@@ -28,29 +29,40 @@ class TOYHMM(object):
         sums = np.tile( np.reshape( self.prO.sum(axis=1), (self.numS,-1)) , (1,self.prO.shape[1]) )
         self.prO = self.prO / sums;
         return
-    def calc_forward_pr(self,seqO):
+    # meanings of forwad and backword
+    # A.prPi (1 x numS)
+    # B. prT (numS x numS)
+    # C. prPi x prT.transpose() -> prS (1 x numS)
+    # D. prS.transpose() x prO[:,o] -> (numS x 1)
+    # ABCD is four steps in HMM. splitting it to two parts
+    # forward part: prPi x prT.transpose() -> prS
+    # backward part: prT.transpose() x prO[:.o].reshape((1, numS))
+    # the reason to split like this is forward x backward equal to ABCD !!!
+    def calc_forward_pr(self,seqO): #P(o_0,o_1,...,o_t|S_t)
         eps = 0.0001
         T = len(seqO)
         outputPr = np.zeros( (self.numS,T) )
-        prevPr = np.reshape( self.prPi, outputPr[:,0].shape)
+        prevPr = self.prPi
         for t in range(T):
             o = seqO[t]
-            outputPr[:,t] = prevPr * self.prO[:,o]
+            outputPr[:,t] = prevPr.reshape((self.numS,)) * self.prO[:,o]
             if self.trainFlag:
                 outputPr[:,t] /= outputPr[:,t].sum()
-            prevPr = np.reshape( self.prT.transpose().dot( np.reshape(outputPr[:,t],(self.numS,1))  ), outputPr[:,t].shape)
+            prevPr = self.prT.transpose().dot( outputPr[:,t].reshape(self.numS,1)  )
         return outputPr
-    def calc_backward_pr(self, seqO, initPr = 1.0):
+    def calc_backward_pr(self, seqO, initPr = 1.0): #P(o_{t+1}, o_{t_2}, ...,o_{T}|S_{t+1})
         eps = 0.0001
         T = len(seqO)
-        outputPr = np.zeros( (self.numS,T)  )
-        prevPr = np.zeros(outputPr[:,0].shape  ) + 1
+        outputPr = np.zeros( (self.numS,self.numS,T)  ) #(currentS, nextS, t) it is "prT" in time
+        nextPr = self.prT
         for t in range(T-1,0,-1):
             o = seqO[t]
-            outputPr[:,t] = prevPr * self.prO[:,o]
+            outputPr[:,:,t] = nextPr.transpose() * self.prO[:,o].reshape((1,-1))
             if self.trainFlag:
-                outputPr[:,t] /= outputPr[:,t].sum()
-            prevPr = np.reshape( self.prT.transpose().dot( np.reshape(outputPr[:,t],(self.numS,1))  ), outputPr[:,t].shape)
+                ss = outputPr[:,:,t].sum(axis = 1)
+                ss = np.tile( ss.reshape(-1,1), (1,numS)  )
+                outputPr[:,:,t] /= ss
+            nextPr = nextPr * self.prT
         return outputPr
     def train_EStep(self,seqO):
         prF = self.calc_forward_pr(seqO)
@@ -72,10 +84,10 @@ class TOYHMM(object):
 
         #pr(S2 | S1)
         prT = np.zeros( self.prT.shape )
-        for t in range(prF.shape[1] - 1):
-            m = np.reshape( prF[:,t], (self.numS,1)  ).dot( np.reshape( prB[:,t+1], (1, -1)   )  )
+        for t in range(prF.shape[1]):
+            m = prB[:,:,t] * np.tile( prF[:,t].reshape(-1,1), (1, self.numS) )
             prT += m
-        m = np.tile( np.reshape( prT.sum(axis=1),(-1,1)), (1, self.numS) )
+        m = np.tile( prT.sum(axis=1).reshape(-1,1), (1,self.numS) )
         prT = prT / m
         return (prPi, prT, prO)
     def train_one(self,seqO):
@@ -97,14 +109,25 @@ class TOYHMM(object):
     def train(self, multSeqO):
         prPi, prT, prO = [],[],[]
         self.init_guess()
-        for seqO in multSeqO:
+        if self.verbose:
+            print 'train start'
+        for num,seqO in enumerate(multSeqO):
             a,b,c = self.train_one(seqO)
             prPi.append(a)
             prT.append(b)
             prO.append(c)
-        prPi = reduce(lambda x,y:x+y, prPi) / len(multSeqO)
-        prT = reduce(lambda x,y:x+y, prT) / len(multSeqO)
-        prO = reduce(lambda x,y:x+y, prO) / len(multSeqO)
+            if self.verbose:
+              print '%d\t'%(num+1),
+        if self.verbose:
+            print 'train done'
+        if 0:
+            prPi = prPi[-1]
+            prT = prT[-1]
+            prO = prO[-1]
+        else:
+            prPi = reduce(lambda x,y:x+y, prPi) / len(multSeqO)
+            prT = reduce(lambda x,y:x+y, prT) / len(multSeqO)
+            prO = reduce(lambda x,y:x+y, prO) / len(multSeqO)
         self.prPi, self.prT, self.prO = prPi, prT, prO
         return self.prPi, self.prT, self.prO
 
@@ -143,12 +166,15 @@ def next_sample(infile):
     return
 
 def train(samplefile, modelfile, numS, numO):
+    trainRatio = 0.1
     multSeqO = []
     for idx, seqS, seqO in next_sample(samplefile):
-    #    if idx > 100:
-    #        break
         multSeqO.append(seqO)
-    hmm = TOYHMM(numS, numO)
+    num = np.int64( len(multSeqO) * trainRatio )
+    #num = 1
+    multSeqO = multSeqO[0:num]
+    print 'train with %d seq'%len(multSeqO)
+    hmm = TOYHMM(numS, numO,trainFlag = False, verbose = True)
     hmm.train(multSeqO)
     hmm.save(modelfile)
     return
@@ -158,13 +184,18 @@ def test(samplefile, modelfile):
     hmm.load(modelfile)
     prlist = []
     misslist = []
+    lines = []
     for idx, seqS, seqO in next_sample(samplefile):
         pr = hmm.evaluate(seqO)
         seqS1 = hmm.decode(seqO)
-        miss = np.asarray(seqS != seqS1).sum() * 1.0 / len(seqS)
-        print '(%d),(%f),%f:'%(idx,pr, miss)
+        miss = reduce(lambda x,y: x + y, [np.int64(x != y) for x,y in zip(seqS, seqS1)]) * 1.0 / len(seqS)
+        lines.append( ','.join( ['%d'%x for x in seqS] ) )
+        lines.append( ','.join( ['%d'%x for x in seqS1] ) )
+        lines.append('\r\n')
         prlist.append(pr)
         misslist.append(miss)
+    with open('test.log','wb') as f:
+        f.writelines('\r\n'.join(lines))
     prlist = np.asarray(prlist)
     misslist = np.asarray(misslist)
     print 'pr: ',prlist.mean(), prlist.std()
@@ -173,11 +204,12 @@ def test(samplefile, modelfile):
 
 
 if __name__=="__main__":
-    numS, numO = 2, 2
+    numS, numO = 2,2
     samplefile = 'samples.txt'
     modelfile = 'hmm.pkl'
     if sys.argv[1] == 'train':
         train(samplefile, modelfile, numS, numO)
+        test(samplefile, modelfile)
     elif sys.argv[1] == 'test':
         test(samplefile, modelfile)
     else:

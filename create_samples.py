@@ -80,8 +80,7 @@ class SAMPLEGEN(object):
             f.writelines('\r\n'.join(outputs))
 
 if __name__=="__main__":
-    numS = 2
-    numO = 2
+    numS,numO = 2,2
     prS = np.random.random( (1, numS))
     prT = np.random.random( (numS,numS))
     prO = np.random.random((numS, numO))
@@ -93,8 +92,21 @@ if __name__=="__main__":
     sums = np.tile( np.reshape( prO.sum(axis=1), (numS,-1)), (1,numO))
     prO = prO / sums
 
-    gen = SAMPLEGEN(prS, prT,prO, 10)
-    gen.run('samples.txt',1000)
+    if 0:
+        prS[0,0] = 0.8
+        prS[0,1] = 0.2
+
+        prT[0,0] = 0.8
+        prT[0,1] = 0.2
+        prT[1,0] = 0.8
+        prT[1,1] = 0.2
+
+        prO[0,0] = 0.8
+        prO[0,1] = 0.2
+        prO[1,0] = 0.8
+        prO[1,1] = 0.2
+    gen = SAMPLEGEN(prS, prT,prO, 150)
+    gen.run('samples.txt',100)
 
 
 
