@@ -105,7 +105,7 @@ if __name__=="__main__":
         prO[0,1] = 0.2
         prO[1,0] = 0.8
         prO[1,1] = 0.2
-    gen = SAMPLEGEN(prS, prT,prO, 150)
+    gen = SAMPLEGEN(prS, prT,prO, 10)
     gen.run('samples.txt',100)
 
 

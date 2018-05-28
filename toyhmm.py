@@ -20,14 +20,24 @@ class TOYHMM(object):
         self.prPi = np.random.random(self.prPi.shape)
         self.prPi /= self.prPi.sum()
 
+        #self.prPi[0,0] = 0.1
+        #self.prPi[0,1] = 0.9
+
         self.prT = np.random.random(self.prT.shape)
         sums = np.tile( np.reshape(self.prT.sum(axis=1),(self.numS,-1)), (1, self.numS)  )
         self.prT = self.prT / sums
 
+        #self.prT[0,0], self.prT[0,1] = 0.8, 0.2
+        #self.prT[1,0], self.prT[1,1] = 0.4, 0.6
+
 
         self.prO = np.random.random(self.prO.shape)
         sums = np.tile( np.reshape( self.prO.sum(axis=1), (self.numS,-1)) , (1,self.prO.shape[1]) )
-        self.prO = self.prO / sums;
+        self.prO = self.prO / sums
+
+        #self.prO[0,0], self.prO[0,1] = 0.7, 0.3
+        #self.prO[1,0], self.prO[1,1] = 0.1, 0.9
+
         return
     # meanings of forwad and backword
     # A.prPi (1 x numS)
@@ -46,23 +56,26 @@ class TOYHMM(object):
         for t in range(T):
             o = seqO[t]
             outputPr[:,t] = prevPr.reshape((self.numS,)) * self.prO[:,o]
-            if self.trainFlag:
-                outputPr[:,t] /= outputPr[:,t].sum()
+            #if np.isnan(outputPr[:,t]).sum() > 0:
+            #    eps = 0.00001
+            #if self.trainFlag:
+            #    outputPr[:,t] /= outputPr[:,t].sum()
             prevPr = self.prT.transpose().dot( outputPr[:,t].reshape(self.numS,1)  )
+            #if np.isnan(prevPr).sum() > 0:
+            #    eps = 0.0001
         return outputPr
     def calc_backward_pr(self, seqO, initPr = 1.0): #P(o_{t+1}, o_{t_2}, ...,o_{T}|S_{t+1})
         eps = 0.0001
         T = len(seqO)
         outputPr = np.zeros( (self.numS,self.numS,T)  ) #(currentS, nextS, t) it is "prT" in time
-        nextPr = self.prT
-        for t in range(T-1,0,-1):
-            o = seqO[t]
-            outputPr[:,:,t] = nextPr.transpose() * self.prO[:,o].reshape((1,-1))
+        outputPr[:,:,T-1] = np.zeros( self.prT.shape ) + 1
+        for t in range(T-2,-1,-1):
+            o = seqO[t+1]
+            outputPr[:,:,t] = self.prT * np.tile( self.prO[:,o].reshape((1,-1)), (self.numS, 1) ) * outputPr[:,:,t+1]
             if self.trainFlag:
                 ss = outputPr[:,:,t].sum(axis = 1)
                 ss = np.tile( ss.reshape(-1,1), (1,numS)  )
                 outputPr[:,:,t] /= ss
-            nextPr = nextPr * self.prT
         return outputPr
     def train_EStep(self,seqO):
         prF = self.calc_forward_pr(seqO)
@@ -88,13 +101,25 @@ class TOYHMM(object):
             m = prB[:,:,t] * np.tile( prF[:,t].reshape(-1,1), (1, self.numS) )
             prT += m
         m = np.tile( prT.sum(axis=1).reshape(-1,1), (1,self.numS) )
+        #if  m.min() < 0.0001:
+        #    pdb.set_trace()
         prT = prT / m
         return (prPi, prT, prO)
+    def check_prF_prB(self, prF, prB): #travel T to equal Pr(O|hmm)
+        prFT = prF[:,-1].reshape((1,self.numS))
+        tmp = self.prPi.reshape((-1,1)) * self.prO[:,0].reshape((-1,1))
+        prB0 = prB[:,:,0].transpose().dot(tmp).reshape((1,self.numS))
+        #prB0 = prB[:,:,0].transpose().dot( self.prPi.reshape((-1,1)) ).reshape((1,self.numS))
+        print 'FT:',prFT
+        print 'FB:',prB0
+        print 'diff:',np.absolute((prFT - prB0))
+        return
     def train_one(self,seqO):
         th = 0.001
-        #self.init_guess()
+        self.init_guess()
         while True:
             prF, prB = self.train_EStep(seqO)
+            #self.check_prF_prB(prF,prB)
             prPi, prT, prO = self.train_MStep(seqO, prF, prB)
 
             dfPi = np.absolute(prPi - self.prPi).sum()
@@ -139,6 +164,15 @@ class TOYHMM(object):
     def load(self, filepath):
         with open(filepath, 'rb') as f:
             self.numS, self.numO, self.prPi, self.prT, self.prO = cPickle.load(f)
+
+        if 0:
+            self.prPi[0,0], self.prPi[0,1] = 0.122,0.878
+
+            self.prT[0,0], self.prT[0,1] = 0.425,0.575
+            self.prT[1,1], self.prT[1,1] = 0.939,0.061
+
+            self.prO[0,0], self.prO[0,1] = 0.607,0.393
+            self.prO[1,0], self.prO[1,1] = 0.904,0.096
         return
 
     def evaluate(self, seqO): #given observation, to get its Pr from the model
@@ -199,7 +233,7 @@ def test(samplefile, modelfile):
     prlist = np.asarray(prlist)
     misslist = np.asarray(misslist)
     print 'pr: ',prlist.mean(), prlist.std()
-    print 'miss: ',misslist.mean(), misslist.std()
+   # print 'miss: ',misslist.mean(), misslist.std() #not a good score to evaluate HMM
     return
 
 
